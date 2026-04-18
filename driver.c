@@ -1,10 +1,12 @@
 #include <dirent.h>
 #include <err.h>
+#include <errno.h>
 #include <fcntl.h>
 #include <limits.h>
 #include <linux/limits.h>
 #include <linux/usb/ch9.h>
 #include <linux/usbdevice_fs.h>
+#include <signal.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -17,6 +19,8 @@
 #define HID_DT_REPORT      0x22
 #define KEYBOARD_ENDPOINT  0x81
 #define REPORT_SIZE        8
+
+int fd = -1;
 
 typedef struct
 {
@@ -35,6 +39,28 @@ typedef struct
   uint8_t iSerialNumber;
   uint8_t bNumConfigurations;
 } __attribute__ ((packed)) usb_device_descriptor_t;
+
+void
+cleanup ()
+{
+  if (fd < 0)
+    return;
+  int ifno = 0;
+  ioctl (fd, USBDEVFS_RELEASEINTERFACE, &ifno);
+
+  struct usbdevfs_ioctl reattach
+      = { .ifno = 0, .ioctl_code = USBDEVFS_CONNECT, .data = NULL };
+  ioctl (fd, USBDEVFS_IOCTL, &reattach);
+  close (fd);
+}
+
+void
+signal_handler (int sig)
+{
+  (void)sig;
+  // cleanup(fd);
+  exit (EXIT_SUCCESS);
+}
 
 char *
 get_usb_device (uint16_t vid, uint16_t pid)
@@ -117,12 +143,18 @@ get_usb_device (uint16_t vid, uint16_t pid)
 int
 main ()
 {
+  signal (SIGINT, signal_handler);  // Ctrl+C
+  signal (SIGTERM, signal_handler); // kill / system shutdown
+  signal (SIGQUIT, signal_handler); // Ctrl+backslash
+  signal (SIGHUP, signal_handler);  // terminal closed
+  atexit (cleanup);
   // char *keyboard_path = get_usb_device (0x413c, 0x2113);
-  char *keyboard_path = get_usb_device (0, 0);
+  // char *keyboard_path = get_usb_device (0, 0);
+  char *keyboard_path = get_usb_device (0x1a2c, 0x9b09);
   if (keyboard_path[0] == '\0')
     errx (EXIT_FAILURE, "no keyboard found");
 
-  int fd = open (keyboard_path, O_RDWR);
+  fd = open (keyboard_path, O_RDWR);
   if (fd < 0)
     errx (EXIT_FAILURE, "cannot open %s", keyboard_path);
 
@@ -169,16 +201,47 @@ main ()
 
   uint8_t report[REPORT_SIZE];
 
+  struct usbdevfs_ctrltransfer ctrl_proto = {
+      .bRequestType = USB_DIR_OUT | USB_TYPE_CLASS | USB_RECIP_INTERFACE,
+      .bRequest     = 0x0B,  // SET_PROTOCOL
+      .wValue       = 0,     // boot protocol
+      .wIndex       = 0,
+      .wLength      = 0,
+      .timeout      = 1000,
+      .data         = NULL
+  };
+  if (ioctl(fd, USBDEVFS_CONTROL, &ctrl_proto) < 0)
+      warn("cannot set boot protocol");
+
+  struct usbdevfs_ctrltransfer ctrl_idle = {
+      .bRequestType = USB_DIR_OUT | USB_TYPE_CLASS | USB_RECIP_INTERFACE,
+      .bRequest     = 0x0A,  // SET_IDLE
+      .wValue       = 0,     // send report on every change
+      .wIndex       = 0,
+      .wLength      = 0,
+      .timeout      = 1000,
+      .data         = NULL
+  };
+  if (ioctl(fd, USBDEVFS_CONTROL, &ctrl_idle) < 0)
+      warn("cannot set idle");
+
   while (1)
     {
-      struct usbdevfs_bulktransfer bulk = { .ep      = KEYBOARD_ENDPOINT,
-                                            .len     = sizeof (report),
-                                            .timeout = 0, // 0 = attente infinie
-                                            .data    = report };
+      struct usbdevfs_bulktransfer bulk
+          = { .ep      = KEYBOARD_ENDPOINT,
+              .len     = sizeof (report),
+              .timeout = 100, // 100ms, check signals regularly
+              .data    = report };
 
       int n = ioctl (fd, USBDEVFS_BULK, &bulk);
       if (n < 0)
-        err (EXIT_FAILURE, "interrupt transfer failed");
+        {
+          if (errno == ETIMEDOUT)
+            continue; // no data, loop again
+          if (errno == EINTR)
+            break; // signal received, exit loop
+          err (EXIT_FAILURE, "interrupt transfer failed");
+        }
 
       printf ("report: ");
       for (int i = 0; i < n; i++)
@@ -186,5 +249,6 @@ main ()
       printf ("\n");
     }
 
+  // cleanup(fd);
   return EXIT_SUCCESS;
 }
