@@ -189,6 +189,36 @@ get_usb_device (uint16_t vid, uint16_t pid)
   return device;
 }
 
+static const char *keycode_to_str(uint8_t kc)
+{
+    static const char *table[256] = {
+        [0x04] = "a", [0x05] = "b", [0x06] = "c", [0x07] = "d",
+        [0x08] = "e", [0x09] = "f", [0x0a] = "g", [0x0b] = "h",
+        [0x0c] = "i", [0x0d] = "j", [0x0e] = "k", [0x0f] = "l",
+        [0x10] = "m", [0x11] = "n", [0x12] = "o", [0x13] = "p",
+        [0x14] = "q", [0x15] = "r", [0x16] = "s", [0x17] = "t",
+        [0x18] = "u", [0x19] = "v", [0x1a] = "w", [0x1b] = "x",
+        [0x1c] = "y", [0x1d] = "z",
+        [0x1e] = "1", [0x1f] = "2", [0x20] = "3", [0x21] = "4",
+        [0x22] = "5", [0x23] = "6", [0x24] = "7", [0x25] = "8",
+        [0x26] = "9", [0x27] = "0",
+        [0x28] = "ENTER",     [0x29] = "ESC",   [0x2a] = "BACKSPACE",
+        [0x2b] = "TAB",       [0x2c] = " ",
+        [0x2d] = "-",         [0x2e] = "=",
+        [0x2f] = "[",         [0x30] = "]",     [0x31] = "\\",
+        [0x33] = ";",         [0x34] = "'",     [0x35] = "`",
+        [0x36] = ",",         [0x37] = ".",     [0x38] = "/",
+        [0x39] = "CAPSLOCK",
+        [0x4f] = "RIGHT",     [0x50] = "LEFT",
+        [0x51] = "DOWN",      [0x52] = "UP",
+    };
+
+    if (table[kc])
+        return table[kc];
+    return NULL;
+}
+
+
 int
 main ()
 {
@@ -252,11 +282,29 @@ main ()
           err (EXIT_FAILURE, "interrupt transfer failed");
         }
 
-      printf ("report: ");
+      puts ("report: ");
       for (int i = 0; i < n; i++)
         printf ("%02x ", report[i]);
-      printf ("\n");
-    }
 
+      if (report[2] != 0)
+      {
+          uint8_t modifiers = report[0];
+          for (int i = 2; i < 8; i++)
+          {
+              if (report[i] == 0)
+                  break;
+
+              const char *str = keycode_to_str(report[i]);
+
+              if (str)
+                  printf("%s", str);
+          }
+          // exit if Ctrl C
+          if(modifiers == 0x01 && report[2]== 0x06)
+              return EXIT_SUCCESS;
+      }
+      puts("\n");
+
+    }
   return EXIT_SUCCESS;
 }
