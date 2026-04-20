@@ -58,7 +58,6 @@ void
 signal_handler (int sig)
 {
   (void)sig;
-  // cleanup(fd);
   exit (EXIT_SUCCESS);
 }
 
@@ -123,6 +122,7 @@ get_usb_device (uint16_t vid, uint16_t pid)
               snprintf (device, PATH_MAX + 1, "%s", dev_path);
               closedir (devs);
               closedir (buses);
+              printf("%d", desc.bDeviceClass);
               return device;
             }
 
@@ -150,7 +150,7 @@ main ()
   atexit (cleanup);
   // char *keyboard_path = get_usb_device (0x413c, 0x2113);
   // char *keyboard_path = get_usb_device (0, 0);
-  char *keyboard_path = get_usb_device (0x1a2c, 0x9b09);
+  char *keyboard_path = get_usb_device (0xeced, 0x3663);
   if (keyboard_path[0] == '\0')
     errx (EXIT_FAILURE, "no keyboard found");
 
@@ -171,60 +171,7 @@ main ()
   if (ioctl (fd, USBDEVFS_CLAIMINTERFACE, &ifno) < 0)
     err (EXIT_FAILURE, "cannot claim interface");
 
-  /* read device descriptor */
-  struct usb_device_descriptor desc;
-  struct usbdevfs_ctrltransfer ctrl = { .bRequestType = USB_DIR_IN,
-                                        .bRequest     = USB_REQ_GET_DESCRIPTOR,
-                                        .wValue       = USB_DT_DEVICE << 8,
-                                        .wIndex       = 0,
-                                        .wLength      = sizeof (desc),
-                                        .timeout      = 1000,
-                                        .data         = &desc };
-
-  if (ioctl (fd, USBDEVFS_CONTROL, &ctrl) < 0)
-    err (EXIT_FAILURE, "cannot read specified device");
-
-  /* reads HID descriptor */
-  uint8_t report_desc[256];
-  struct usbdevfs_ctrltransfer ctrl2
-      = { .bRequestType = USB_DIR_IN | USB_TYPE_STANDARD | USB_RECIP_INTERFACE,
-          .bRequest     = USB_REQ_GET_DESCRIPTOR,
-          .wValue       = HID_DT_REPORT << 8,
-          .wIndex       = 0, // interface 0
-          .wLength      = sizeof (report_desc),
-          .timeout      = 1000,
-          .data         = report_desc };
-
-  int len = ioctl (fd, USBDEVFS_CONTROL, &ctrl2);
-  if (len < 0)
-    err (EXIT_FAILURE, "cannot read HID report descriptor");
-
   uint8_t report[REPORT_SIZE];
-
-  struct usbdevfs_ctrltransfer ctrl_proto = {
-      .bRequestType = USB_DIR_OUT | USB_TYPE_CLASS | USB_RECIP_INTERFACE,
-      .bRequest     = 0x0B,  // SET_PROTOCOL
-      .wValue       = 0,     // boot protocol
-      .wIndex       = 0,
-      .wLength      = 0,
-      .timeout      = 1000,
-      .data         = NULL
-  };
-  if (ioctl(fd, USBDEVFS_CONTROL, &ctrl_proto) < 0)
-      warn("cannot set boot protocol");
-
-  struct usbdevfs_ctrltransfer ctrl_idle = {
-      .bRequestType = USB_DIR_OUT | USB_TYPE_CLASS | USB_RECIP_INTERFACE,
-      .bRequest     = 0x0A,  // SET_IDLE
-      .wValue       = 0,     // send report on every change
-      .wIndex       = 0,
-      .wLength      = 0,
-      .timeout      = 1000,
-      .data         = NULL
-  };
-  if (ioctl(fd, USBDEVFS_CONTROL, &ctrl_idle) < 0)
-      warn("cannot set idle");
-
   while (1)
     {
       struct usbdevfs_bulktransfer bulk
@@ -249,6 +196,5 @@ main ()
       printf ("\n");
     }
 
-  // cleanup(fd);
   return EXIT_SUCCESS;
 }
